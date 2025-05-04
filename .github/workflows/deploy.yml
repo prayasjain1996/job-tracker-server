@@ -1,0 +1,88 @@
+name: Build, Push Docker Images to ECR, and Deploy to ECS
+
+on:
+  push:
+    branches:
+      - master  # Trigger on push to the 'master' branch (you can change this to 'main' or other branches if needed)
+
+env:
+  AWS_REGION: ap-south-1  # Set region as an environment variable
+  ECS_CLUSTER_NAME: job-tracker-cluster  # Name of your ECS cluster
+  ECS_SERVICE_NAME: job-service  # Name of your ECS service
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}  # AWS account ID (from GitHub secrets)
+  ECR_REPOSITORY_BACKEND: job-tracker-server  # ECR repository for backend
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v1
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Log in to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v1
+      with:
+        region: ${{ env.AWS_REGION }}
+
+    - name: Build and push backend Docker image
+      run: |
+        docker build -t ${{ env.ECR_REPOSITORY_BACKEND }} ./backend
+        docker tag ${{ env.ECR_REPOSITORY_BACKEND }}:latest ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:latest
+        docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Set up AWS CLI
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Register ECS task definition for backend
+      run: |
+        FAMILY="backend-task-definition"
+        BACKEND_TASK_DEFINITION=$(cat <<EOF
+        {
+          "family": "$FAMILY",
+          "containerDefinitions": [
+            {
+              "name": "backend",
+              "image": "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:latest",
+              "memory": 512,
+              "cpu": 256,
+              "essential": true,
+              "portMappings": [
+                {
+                  "containerPort": 5000,
+                  "hostPort": 5000
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+        )
+        echo "$BACKEND_TASK_DEFINITION" > backend-task-definition.json
+        aws ecs register-task-definition --cli-input-json file://backend-task-definition.json
+
+    - name: Update ECS service for backend
+      run: |
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER_NAME }} \
+          --service ${{ env.ECS_SERVICE_NAME }}-backend \
+          --task-definition backend-task-definition \
+          --desired-count 2
