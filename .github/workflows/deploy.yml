@@ -37,7 +37,7 @@ jobs:
 
     - name: Build and push backend Docker image
       run: |
-        docker build -t ${{ env.ECR_REPOSITORY_BACKEND }} ./backend
+        docker build -t ${{ env.ECR_REPOSITORY_BACKEND }} .
         docker tag ${{ env.ECR_REPOSITORY_BACKEND }}:latest ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:latest
         docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:latest
 
